@@ -4,7 +4,6 @@ import (
 	"context"
 	"os"
 	"os/signal"
-	"strconv"
 	"syscall"
 	"time"
 
@@ -15,36 +14,28 @@ import (
 )
 
 const (
-	defaultPort = 4567
+	defaultPort      = 4567
+	gracefulShutdown = 2 * time.Second
 )
 
 func main() {
 	logger, _ := zap.NewProduction(zap.AddStacktrace(zapcore.FatalLevel))
-	defer logger.Sync()
+	defer func() {
+		_ = logger.Sync()
+	}()
 
-	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
-
-	gracefulShutdown := 5 * time.Second
-
-	portStr := os.Getenv("PORT")
-	logger.Info("PORT", zap.String("value", portStr))
-
-	portNumber, err := strconv.Atoi(portStr)
-	if len(portStr) == 0 || err != nil {
-		portNumber = defaultPort
-	}
+	signalCh := make(chan os.Signal, 1)
+	signal.Notify(signalCh, syscall.SIGINT, syscall.SIGTERM)
 
 	s := tracker.New(logger,
 		tracker.WithBotNumber(4),
 		tracker.WithGracefulShutdown(gracefulShutdown),
-		tracker.WithPort(portNumber))
+		tracker.WithPort(defaultPort))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go s.Run(ctx)
 
-	<-sigs
-
+	<-signalCh
 	cancel()
 
 	time.Sleep(gracefulShutdown)

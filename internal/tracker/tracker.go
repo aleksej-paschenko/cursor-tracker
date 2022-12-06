@@ -23,7 +23,6 @@ type Options struct {
 	bots                    int
 	port                    int
 	gracefulShutdownTimeout time.Duration
-	websocketHandlerCtor    func(logger *zap.Logger, userActionCh chan<- userAction) http.HandlerFunc
 }
 
 type Option func(o *Options)
@@ -34,12 +33,14 @@ func WithGracefulShutdown(timeout time.Duration) Option {
 	}
 }
 
+// WithPort configures a port to open for incoming connections.
 func WithPort(port int) Option {
 	return func(o *Options) {
 		o.port = port
 	}
 }
 
+// WithBotNumber configures a number of bots to be added to CursorTracker.
 func WithBotNumber(bots int) Option {
 	return func(o *Options) {
 		if bots < 0 {
@@ -53,32 +54,32 @@ func WithBotNumber(bots int) Option {
 }
 
 type CursorTracker struct {
-	userActionCh chan userAction
+	logger *zap.Logger
+	mux    *http.ServeMux
+
+	clientActionCh chan clientAction
 
 	portNumber              int
-	logger                  *zap.Logger
-	mux                     *http.ServeMux
 	bots                    int
 	gracefulShutdownTimeout time.Duration
 }
 
+// New returns a new instance of CursorTracker.
 func New(logger *zap.Logger, opts ...Option) *CursorTracker {
-	options := &Options{
-		websocketHandlerCtor: websocketHandler,
-	}
+	options := &Options{}
 	for _, o := range opts {
 		o(options)
 	}
 	tracker := &CursorTracker{
-		userActionCh: make(chan userAction),
-		mux:          http.NewServeMux(),
-		bots:         options.bots,
-		portNumber:   options.port,
-		logger:       logger,
+		clientActionCh: make(chan clientAction),
+		mux:            http.NewServeMux(),
+		bots:           options.bots,
+		portNumber:     options.port,
+		logger:         logger,
 	}
-	tracker.mux.HandleFunc("/websocket", options.websocketHandlerCtor(logger, tracker.userActionCh))
+	tracker.mux.HandleFunc("/websocket", websocketHandler(logger, tracker.clientActionCh))
 	tracker.mux.HandleFunc("/", func(writer http.ResponseWriter, request *http.Request) {
-		fmt.Fprintf(writer, indexHtml)
+		fmt.Fprint(writer, indexHtml)
 	})
 
 	return tracker
@@ -92,13 +93,17 @@ func (trk *CursorTracker) Run(ctx context.Context) {
 			select {
 			case <-ctx.Done():
 				return nil
-			case <-time.After(4 * time.Second):
+			case <-time.After(2 * time.Second):
 			}
 
 			var wg sync.WaitGroup
 			wg.Add(trk.bots)
+
 			for i := 0; i < trk.bots; i++ {
-				go runBot(ctx, trk.logger, endpoint, &wg)
+				go func() {
+					defer wg.Done()
+					runBot(ctx, trk.logger, endpoint)
+				}()
 			}
 			wg.Wait()
 		}
@@ -108,7 +113,8 @@ func (trk *CursorTracker) Run(ctx context.Context) {
 		Handler: trk.mux,
 	}
 	trk.logger.Info("Running http server",
-		zap.Int("port", trk.portNumber))
+		zap.Int("port", trk.portNumber),
+		zap.String("address", fmt.Sprintf("http://localhost:%d/", trk.portNumber)))
 
 	g.Go(func() error {
 		err := httpServer.ListenAndServe()
@@ -120,7 +126,7 @@ func (trk *CursorTracker) Run(ctx context.Context) {
 		return err
 	})
 	g.Go(func() error {
-		handleUserActionsLoop(ctx, trk.logger, trk.userActionCh)
+		handleClientActionsLoop(ctx, trk.logger, trk.clientActionCh)
 		return nil
 	})
 
@@ -136,39 +142,48 @@ func (trk *CursorTracker) Run(ctx context.Context) {
 	}
 }
 
-type userActionType string
+type clientActionType string
 
 const (
-	moveMethod  userActionType = "move"
-	leaveMethod userActionType = "leave"
+	moveMethod  clientActionType = "move"
+	leaveMethod clientActionType = "leave"
 )
 
+// sessionUpdateModel is a JSON model to encode a session state.
+// Once a session is updated, it'll be sent to all connected clients.
 type sessionUpdateModel struct {
-	SessionID sessionID      `json:"sessionId"`
-	Method    userActionType `json:"method"`
-	X         int            `json:"x"`
-	Y         int            `json:"y"`
+	SessionID sessionID        `json:"sessionId"`
+	Method    clientActionType `json:"method"`
+	X         int              `json:"x"`
+	Y         int              `json:"y"`
 }
 
+// cursorMoveModel is a JSON model to encode a cursor position.
+// Once a mouse position in a browser is changed,
+// the browser will send this new position to CursorTracker.
 type cursorMoveModel struct {
 	X int `json:"x"`
 	Y int `json:"y"`
 }
 
+// sessionID is a unique identifier of a client's session.
 type sessionID string
 
 type conn interface {
 	WriteJSON(v interface{}) error
+	Close() error
 }
 
-type userAction struct {
+// clientAction is used to pass information from a websocket goroutine to handleClientActionsLoop.
+type clientAction struct {
 	sid        sessionID
-	actionType userActionType
+	actionType clientActionType
 	X, Y       int
 	conn       conn
 }
 
-func websocketHandler(logger *zap.Logger, userActionCh chan<- userAction) http.HandlerFunc {
+// websocketHandler handles each websocket connection in its own goroutine.
+func websocketHandler(logger *zap.Logger, clientActionCh chan<- clientAction) http.HandlerFunc {
 	upgrader := websocket.Upgrader{}
 	return func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.Upgrade(w, r, nil)
@@ -184,9 +199,13 @@ func websocketHandler(logger *zap.Logger, userActionCh chan<- userAction) http.H
 		for {
 			_, msg, err := conn.ReadMessage()
 			if err != nil {
-				userActionCh <- userAction{
+				clientActionCh <- clientAction{
 					sid:        sid,
 					actionType: leaveMethod,
+				}
+				if websocket.IsCloseError(err, websocket.CloseGoingAway) {
+					logger.Info("connection closed", zap.String("remoteAddr", string(sid)))
+					return
 				}
 				logger.Error("conn.ReadMessage failed", zap.Error(err))
 				return
@@ -196,7 +215,7 @@ func websocketHandler(logger *zap.Logger, userActionCh chan<- userAction) http.H
 				logger.Error("failed to unmarshal cursorMoveModel", zap.Error(err))
 				continue
 			}
-			userActionCh <- userAction{
+			clientActionCh <- clientAction{
 				sid:        sid,
 				actionType: moveMethod,
 				X:          mm.X,
@@ -207,19 +226,27 @@ func websocketHandler(logger *zap.Logger, userActionCh chan<- userAction) http.H
 	}
 }
 
-func handleUserActionsLoop(ctx context.Context, logger *zap.Logger, userActionCh <-chan userAction) {
+// handleClientActionsLoop handles all clients' updates in a loop.
+// When a client updates its mouse coordinates, the method sends this update to the other clients.
+func handleClientActionsLoop(ctx context.Context, logger *zap.Logger, clientActionCh <-chan clientAction) {
 	connections := make(map[sessionID]conn)
+
+	// we don't use
+	// for msg := range clientActionCh { } + close(clientActionCh) pattern here,
+	// because http.Server doesn't close hijacked connections such as websockets,
+	// so websocketHandler keeps writing to clientActionCh. If we close the channel, it could lead to a panic.
+
 	for {
 		select {
-		case msg := <-userActionCh:
+		case msg := <-clientActionCh:
 			switch msg.actionType {
 			case leaveMethod:
 				delete(connections, msg.sid)
 			case moveMethod:
 				connections[msg.sid] = msg.conn
 			}
-			for cid, conn := range connections {
-				if cid == msg.sid {
+			for sid, conn := range connections {
+				if sid == msg.sid {
 					continue
 				}
 				msg := sessionUpdateModel{
@@ -234,23 +261,27 @@ func handleUserActionsLoop(ctx context.Context, logger *zap.Logger, userActionCh
 				}
 			}
 		case <-ctx.Done():
-			var messages []sessionUpdateModel
-			for cid := range connections {
+			messages := make([]sessionUpdateModel, 0, len(connections))
+			for sid := range connections {
 				messages = append(messages, sessionUpdateModel{
-					SessionID: cid,
+					SessionID: sid,
 					Method:    leaveMethod,
 				})
 			}
-			for cid, conn := range connections {
-				logger.Info("sending quit signal to a user",
-					zap.String("remoteAddr", string(cid)))
+			for sid, conn := range connections {
+				logger.Info("sending quit signal",
+					zap.String("remoteAddr", string(sid)))
 
 				for _, msg := range messages {
+					if msg.SessionID == sid {
+						continue
+					}
 					if err := conn.WriteJSON(msg); err != nil {
 						logger.Error("WriteJSON failed", zap.Error(err))
 						continue
 					}
 				}
+				conn.Close()
 			}
 			return
 		}
