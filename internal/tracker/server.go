@@ -73,6 +73,7 @@ func New(logger *zap.Logger, opts ...Option) *CursorTracker {
 		userActionCh: make(chan userAction),
 		mux:          http.NewServeMux(),
 		bots:         options.bots,
+		portNumber:   options.port,
 		logger:       logger,
 	}
 	tracker.mux.HandleFunc("/websocket", options.websocketHandlerCtor(logger, tracker.userActionCh))
@@ -106,6 +107,9 @@ func (trk *CursorTracker) Run(ctx context.Context) {
 		Addr:    fmt.Sprintf(":%d", trk.portNumber),
 		Handler: trk.mux,
 	}
+	trk.logger.Info("Running http server",
+		zap.Int("port", trk.portNumber))
+
 	g.Go(func() error {
 		err := httpServer.ListenAndServe()
 		if errors.Is(err, http.ErrServerClosed) {

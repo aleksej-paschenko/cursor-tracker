@@ -28,6 +28,8 @@ func main() {
 	gracefulShutdown := 5 * time.Second
 
 	portStr := os.Getenv("PORT")
+	logger.Info("PORT", zap.String("value", portStr))
+
 	portNumber, err := strconv.Atoi(portStr)
 	if len(portStr) == 0 || err != nil {
 		portNumber = defaultPort

@@ -24,3 +24,20 @@ jobs:
         run: |
           docker build -t cr.yandex/$CR_REGISTRY/cursor-tracker:$IMAGE_TAG .
           docker push cr.yandex/$CR_REGISTRY/cursor-tracker:$IMAGE_TAG
+
+      - name: Deploy Serverless Container
+        env:
+          CR_REGISTRY: crpqhtbgo1oa3o9noecv
+          IMAGE_TAG: ${{ github.sha }}
+        id: deploy-sls-container
+        uses: yc-actions/yc-sls-container-deploy@v2
+        with:
+          yc-sa-json-credentials: ${{ secrets.YC_SA_JSON_CREDENTIALS }}
+          container-name: cursor-tracker
+          revision-service-account-id: cursor-tracker
+          revision-cores: 1
+          revision-memory: 128
+          revision-core-fraction: 20
+          revision-concurrency: 1
+          revision-image-url: cr.yandex/$CR_REGISTRY/cursor-tracker:$IMAGE_TAG
+          revision-execution-timeout: 10
