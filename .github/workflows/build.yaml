@@ -32,7 +32,7 @@ jobs:
           yc-sa-json-credentials: ${{ secrets.YC_SA_JSON_CREDENTIALS }}
           folder-id:  ${{ secrets.YANDEX_FOLDER_ID }}
           container-name: cursor-tracker
-          revision-service-account-id: cursor-tracker
+          revision-service-account-id: tracker
           revision-cores: 1
           revision-memory: 128Mb
           revision-core-fraction: 20
