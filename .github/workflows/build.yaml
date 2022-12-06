@@ -3,9 +3,6 @@ on:
   push:
     branches:
       - 'main'
-  pull_request:
-    branches:
-      - '*'
 
 jobs:
   build:
@@ -37,7 +34,7 @@ jobs:
           container-name: cursor-tracker
           revision-service-account-id: cursor-tracker
           revision-cores: 1
-          revision-memory: 128
+          revision-memory: 128Mb
           revision-core-fraction: 20
           revision-concurrency: 1
           revision-image-url: cr.yandex/$CR_REGISTRY/cursor-tracker:$IMAGE_TAG
