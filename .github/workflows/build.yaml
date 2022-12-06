@@ -33,6 +33,7 @@ jobs:
         uses: yc-actions/yc-sls-container-deploy@v2
         with:
           yc-sa-json-credentials: ${{ secrets.YC_SA_JSON_CREDENTIALS }}
+          folder-id:  ${{ secrets.YANDEX_FOLDER_ID }}
           container-name: cursor-tracker
           revision-service-account-id: cursor-tracker
           revision-cores: 1
