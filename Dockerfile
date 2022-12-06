@@ -17,3 +17,5 @@ WORKDIR /
 COPY --from=builder go/src/github.com/aleksej-paschenko/cursor-tracker/cmd/tracker /
 
 USER nonroot:nonroot
+
+ENTRYPOINT ["/tracker"]
