@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Hello</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+        }
+        body {
+            overflow: hidden;
+        }
+        .cursor {
+            position: absolute;
+            border-radius: 10px;
+            width: 10px;
+            height: 10px;
+        }
+    </style>
+</head>
+<body>
+<script>
+    var url = new URL('/websocket', window.location.href);
+    url.protocol = url.protocol.replace('http', 'ws');
+    let socket = new WebSocket(url);
+    let connected = false;
+    let cursors = {};
+    socket.onopen = () => {
+        connected = true;
+    };
+    socket.onmessage = (e) => {
+        const data = JSON.parse(e.data);
+        const sessionId = data.sessionId;
+        const cursor = cursors[sessionId];
+        switch (data.method) {
+            case 'move':
+                const style = `translate(${data.x}px, ${data.y}px)`;
+                if (cursor) {
+                    cursor.el.style.transform = style;
+                    break;
+                }
+                const el = document.createElement('div');
+                el.className = 'cursor';
+                el.style.background = getRandomColor();
+                el.style.transform = style;
+                document.body.appendChild(el);
+                cursors[sessionId] = {};
+                cursors[sessionId].el = el;
+                break;
+            case 'leave':
+                if (cursor) {
+                    cursor.el.remove();
+                    delete cursors[sessionId];
+                }
+                break;
+        }
+    };
+    socket.onclose = () => {
+        connected = false;
+    };
+    socket.onerror = () => {
+        connected = false;
+    };
+    function getRandomColor() {
+        let letters = 'ABCDEF0123456789';
+        let color = '#';
+        for (var i = 0; i < 6; i++) {
+            color += letters[Math.floor(Math.random() * letters.length)];
+        }
+        return color;
+    }
+    document.addEventListener('mousemove', (e) => {
+        if (connected) socket.send(JSON.stringify({ x: e.clientX, y: e.clientY }));
+    });
+</script>
+</body>
+</html>
