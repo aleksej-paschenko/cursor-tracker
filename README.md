@@ -3,12 +3,12 @@
 
 This is a simple web server that exposes an index page. 
 When you open the page, you will see circles of different colors. 
-Don't be scary. Each circle is a mouse position of somebody, who is looking at the same page at the moment.
+Don't be scared. Each circle is a mouse position of somebody, who is looking at the same page at the moment.
 Ah, and there are a few bots.
 
 # How to use it
 
-There is a Makefile in the root folder, it contains several commands to make your life a bit easier.
+A Makefile in the root folder contains several commands to make your life a bit easier.
 The most important are:
 * `make run` runs the web server. By default, the server will open 4567 port, and you can access it at [localhost:4567](`http://localhost:4567`).
 * `make test` runs a test suite.
